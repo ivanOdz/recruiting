@@ -10,7 +10,7 @@ if (!openai.apiKey) {
 
 type SearchResponse = {
   id: string
-  name: string
+  full_name: string  // Changed from 'name' to 'full_name' to match your Supabase schema
   cv_info: string
   similarity: number
   linkedin_url?: string | null
@@ -110,18 +110,51 @@ export async function POST(request: NextRequest) {
       } else if (fallbackData && fallbackData.length > 0) {
         console.log('Found candidates with 0.0 threshold:')
         fallbackData.forEach((item: SearchResponse, idx: number) => {
-          console.log(`  ${idx + 1}. Similarity: ${item.similarity?.toFixed(4)} - ${item.name}`)
+          console.log(`  ${idx + 1}. Similarity: ${item.similarity?.toFixed(4)} - ${item.full_name}`)
         })
         
-        // Return results even with low similarity, but note it in the response
-        const fallbackCandidates = fallbackData.map((item: SearchResponse) => ({
-          id: item.id,
-          name: item.name || 'Unknown',
-          accuracy: Math.round((item.similarity || 0) * 100),
-          reason: item.cv_info || 'No additional information available',
-          ...(item.linkedin_url && { linkedinUrl: item.linkedin_url }),
-          ...(item.cv_url && { cvUrl: item.cv_url }),
-        }))
+        // Return results even with low similarity, generating reasons for each
+        const fallbackCandidates = await Promise.all(
+          fallbackData.map(async (item: SearchResponse) => {
+            // Generate a summary explaining why this candidate matches
+            let reason = 'No additional information available'
+            
+            if (item.cv_info && item.cv_info.trim()) {
+              try {
+                const reasonResponse = await openai.chat.completions.create({
+                  model: 'gpt-4o-mini',
+                  messages: [
+                    {
+                      role: 'system',
+                      content: 'You are a recruiter assistant. Generate a brief, professional summary explaining why a candidate matches a job search query. Focus on relevant skills, experience, and qualifications. Keep it concise (2-3 sentences).',
+                    },
+                    {
+                      role: 'user',
+                      content: `Search query: "${query}"\n\nCandidate CV information:\n${item.cv_info}\n\nGenerate a brief summary explaining why this candidate is a good match for this search query.`,
+                    },
+                  ],
+                  max_tokens: 150,
+                  temperature: 0.7,
+                })
+                
+                reason = reasonResponse.choices[0]?.message?.content?.trim() || item.cv_info
+              } catch (error) {
+                console.error(`Error generating reason for candidate ${item.id}:`, error)
+                // Fallback to original cv_info if OpenAI call fails
+                reason = item.cv_info
+              }
+            }
+
+            return {
+              id: item.id,
+              name: item.full_name || 'Unknown',
+              accuracy: Math.round((item.similarity || 0) * 100),
+              reason,
+              ...(item.linkedin_url && { linkedinUrl: item.linkedin_url }),
+              ...(item.cv_url && { cvUrl: item.cv_url }),
+            }
+          })
+        )
         
         return NextResponse.json(fallbackCandidates)
       } else {
@@ -132,22 +165,48 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Transform the results to match the expected format
-    const candidates: Array<{
-      id: string
-      name: string
-      accuracy: number
-      reason: string
-      linkedinUrl?: string
-      cvUrl?: string
-    }> = (data || []).map((item: SearchResponse) => ({
-      id: item.id,
-      name: item.name || 'Unknown',
-      accuracy: Math.round((item.similarity || 0) * 100),
-      reason: item.cv_info || 'No additional information available',
-      ...(item.linkedin_url && { linkedinUrl: item.linkedin_url }),
-      ...(item.cv_url && { cvUrl: item.cv_url }),
-    }))
+    // Transform the results and generate reasons for each candidate
+    const candidates = await Promise.all(
+      (data || []).map(async (item: SearchResponse) => {
+        // Generate a summary explaining why this candidate matches
+        let reason = 'No additional information available'
+        
+        if (item.cv_info && item.cv_info.trim()) {
+          try {
+            const reasonResponse = await openai.chat.completions.create({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are a recruiter assistant. Generate a brief, professional summary explaining why a candidate matches a job search query. Focus on relevant skills, experience, and qualifications. Keep it concise (2-3 sentences).',
+                },
+                {
+                  role: 'user',
+                  content: `Search query: "${query}"\n\nCandidate CV information:\n${item.cv_info}\n\nGenerate a brief summary explaining why this candidate is a good match for this search query.`,
+                },
+              ],
+              max_tokens: 150,
+              temperature: 0.7,
+            })
+            
+            reason = reasonResponse.choices[0]?.message?.content?.trim() || item.cv_info
+          } catch (error) {
+            console.error(`Error generating reason for candidate ${item.id}:`, error)
+            // Fallback to original cv_info if OpenAI call fails
+            reason = item.cv_info
+          }
+        }
+
+        return {
+          id: item.id,
+          name: item.full_name || 'Unknown',
+          accuracy: Math.round((item.similarity || 0) * 100),
+          reason,
+          ...(item.linkedin_url && { linkedinUrl: item.linkedin_url }),
+          ...(item.cv_url && { cvUrl: item.cv_url }),
+        }
+      })
+    )
 
     return NextResponse.json(candidates)
   } catch (error) {
