@@ -30,46 +30,6 @@ type Message = {
   timestamp: Date
 }
 
-// Mock data
-const mockCandidates: Candidate[] = [
-  {
-    id: '1',
-    name: 'Sarah Chen',
-    accuracy: 95,
-    reason: 'Strong background in React and TypeScript with 5+ years experience. Previously led frontend teams at tech startups. Excellent communication skills demonstrated through technical blog posts.',
-    linkedinUrl: 'https://linkedin.com/in/sarahchen',
-  },
-  {
-    id: '2',
-    name: 'Marcus Johnson',
-    accuracy: 92,
-    reason: 'Senior full-stack developer with expertise in Next.js and Node.js. Has experience building scalable applications and mentoring junior developers. Strong problem-solving skills.',
-    cvUrl: '/cv/marcus-johnson.pdf',
-  },
-  {
-    id: '3',
-    name: 'Priya Patel',
-    accuracy: 89,
-    reason: 'Experienced frontend engineer with a focus on performance optimization and accessibility. Contributed to open-source projects and has a proven track record of delivering high-quality code.',
-    linkedinUrl: 'https://linkedin.com/in/priyapatel',
-    cvUrl: '/cv/priya-patel.pdf',
-  },
-  {
-    id: '4',
-    name: 'Alex Rivera',
-    accuracy: 87,
-    reason: 'Full-stack developer with strong design sensibility. Experience with modern web technologies and agile methodologies. Quick learner with excellent collaboration skills.',
-    linkedinUrl: 'https://linkedin.com/in/alexrivera',
-  },
-  {
-    id: '5',
-    name: 'Emily Watson',
-    accuracy: 84,
-    reason: 'Mid-level developer with solid React experience and growing expertise in backend technologies. Passionate about clean code and continuous learning. Good cultural fit based on values alignment.',
-    cvUrl: '/cv/emily-watson.pdf',
-  },
-]
-
 const mockHistory: SearchHistory[] = [
   { id: '1', query: 'Senior React Developer', timestamp: new Date(Date.now() - 3600000) },
   { id: '2', query: 'Full-stack Engineer with Node.js', timestamp: new Date(Date.now() - 7200000) },
@@ -110,22 +70,48 @@ export function CandidateSearch() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    const query = input.trim()
     setInput('')
     setIsSearching(true)
 
-    // Simulate API call
-    setTimeout(() => {
-      const results = mockCandidates.slice(0, 5)
+    try {
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        const errorMessage = errorData.error || `HTTP error! status: ${response.status}`
+        throw new Error(errorMessage)
+      }
+
+      const results: Candidate[] = await response.json()
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `I found ${results.length} candidates matching your criteria. Here are the top matches ranked by relevance:`,
+        content: results.length > 0
+          ? `I found ${results.length} candidates matching your criteria. Here are the top matches ranked by relevance:`
+          : "I couldn't find any candidates matching your criteria. This might mean:\n- No candidates have embeddings yet (run: npm run embed)\n- The search query doesn't match any candidates\n- There are no candidates in the database\n\nTry adjusting your search query or ensure candidates have been added and embeddings have been generated.",
         candidates: results,
         timestamp: new Date(),
       }
       setMessages((prev) => [...prev, assistantMessage])
+    } catch (error) {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `Sorry, I encountered an error while searching: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+        timestamp: new Date(),
+      }
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
       setIsSearching(false)
-    }, 1500)
+    }
   }
 
   return (
